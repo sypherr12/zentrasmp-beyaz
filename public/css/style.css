@@ -1,0 +1,167 @@
+const loginPanel = document.getElementById('login-panel');
+const adminPanel = document.getElementById('admin-panel');
+const adminLoginForm = document.getElementById('admin-login-form');
+const adminList = document.getElementById('admin-list');
+const adminStatus = document.getElementById('admin-status');
+const logoutBtn = document.getElementById('logout-btn');
+const adminModal = document.getElementById('admin-modal');
+const adminTicketView = document.getElementById('admin-ticket-view');
+const closeAdminModal = document.getElementById('close-admin-modal');
+
+async function checkAdminSession() {
+  const res = await fetch('/api/admin/session');
+  const data = await res.json();
+
+  if (data.loggedIn) {
+    loginPanel.classList.add('hidden');
+    adminPanel.classList.remove('hidden');
+    adminStatus.textContent = `Giriş yapan: ${data.username}`;
+    loadAdminTickets();
+  }
+}
+
+adminLoginForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+
+  const username = document.getElementById('admin-username').value.trim();
+  const password = document.getElementById('admin-password').value.trim();
+
+  const res = await fetch('/api/admin/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password })
+  });
+
+  const data = await res.json();
+
+  if (!res.ok) {
+    alert(data.error || 'Giriş başarısız.');
+    return;
+  }
+
+  loginPanel.classList.add('hidden');
+  adminPanel.classList.remove('hidden');
+  adminStatus.textContent = `Giriş yapan: ${data.username}`;
+  loadAdminTickets();
+});
+
+logoutBtn.addEventListener('click', async () => {
+  await fetch('/api/admin/logout', { method: 'POST' });
+  loginPanel.classList.remove('hidden');
+  adminPanel.classList.add('hidden');
+  adminList.innerHTML = '';
+});
+
+closeAdminModal.addEventListener('click', () => {
+  adminModal.classList.add('hidden');
+});
+
+async function loadAdminTickets() {
+  const res = await fetch('/api/admin/tickets', { headers: { 'Content-Type': 'application/json' } });
+  if (!res.ok) {
+    alert('Yönetici girişi gerekli.');
+    return;
+  }
+
+  const data = await res.json();
+  adminList.innerHTML = '';
+
+  if (!Array.isArray(data) || data.length === 0) {
+    adminList.innerHTML = '<div class="small">Henüz destek talebi gelmedi.</div>';
+    return;
+  }
+
+  data.forEach((ticket) => {
+    const row = document.createElement('div');
+    row.className = 'ticket-row admin-ticket';
+    row.innerHTML = `
+      <div>
+        <strong>${escapeHtml(ticket.subject)}</strong>
+        <div class="small">${escapeHtml(ticket.username)} • ${escapeHtml(ticket.created_at)} • ${escapeHtml(ticket.status)}</div>
+      </div>
+      <button class="btn" onclick="openAdminTicket(${ticket.id})">İncele</button>
+    `;
+    adminList.appendChild(row);
+  });
+}
+
+window.openAdminTicket = async function (ticketId) {
+  const res = await fetch(`/api/tickets/${ticketId}`);
+  if (!res.ok) {
+    alert('Ticket yüklenemedi.');
+    return;
+  }
+
+  const data = await res.json();
+  renderAdminTicket(data);
+  adminModal.classList.remove('hidden');
+};
+
+function renderAdminTicket(data) {
+  const ticket = data.ticket;
+  const messages = data.messages || [];
+
+  let html = `
+    <h3>${escapeHtml(ticket.subject)}</h3>
+    <div class="small">${escapeHtml(ticket.username)} • ${escapeHtml(ticket.created_at)}</div>
+    <div style="margin-top: 14px;">
+  `;
+
+  messages.forEach((message) => {
+    html += `
+      <div class="message ${message.sender === 'admin' ? 'admin' : 'user'}">
+        <div class="small">${escapeHtml(message.created_at)} • ${escapeHtml(message.sender)}</div>
+        <div>${escapeHtml(message.body)}</div>
+      </div>
+    `;
+  });
+
+  html += `
+    </div>
+    <div style="margin-top: 16px;">
+      <label>Yanıt Yaz</label>
+      <textarea id="admin-reply-body" placeholder="Oyuncuya yanıt yazın..."></textarea>
+      <div style="margin-top: 10px;">
+        <button class="btn primary" id="send-admin-reply">Gönder</button>
+      </div>
+    </div>
+  `;
+
+  adminTicketView.innerHTML = html;
+
+  document.getElementById('send-admin-reply').addEventListener('click', async () => {
+    const reply = document.getElementById('admin-reply-body').value.trim();
+    if (!reply) {
+      alert('Boş cevap gönderilemez.');
+      return;
+    }
+
+    const res = await fetch(`/api/admin/tickets/${ticket.id}/reply`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ body: reply })
+    });
+
+    if (!res.ok) {
+      const data = await res.json();
+      alert(data.error || 'Cevap gönderilemedi.');
+      return;
+    }
+
+    alert('Cevap gönderildi.');
+    openAdminTicket(ticket.id);
+    loadAdminTickets();
+  });
+}
+
+function escapeHtml(value) {
+  if (!value) return '';
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+checkAdminSession();

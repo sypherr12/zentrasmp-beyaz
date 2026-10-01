@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Destek - Zentrasmp</title>
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="container topbar-inner">
+      <div class="brand-wrap">
+        <h1>Zentrasmp</h1>
+      </div>
+      <div class="header-actions">
+        <a href="/admin" class="link-btn">Yönetici Girişi</a>
+        <div id="server-ip" class="server-ip">IP: Yükleniyor...</div>
+      </div>
+    </div>
+  </header>
+
+  <main class="container grid">
+    <section class="card">
+      <h2>Destek Aç</h2>
+      <form id="new-ticket-form">
+        <label>Nick / Adınız</label>
+        <input id="username" placeholder="Oyuncu adı" />
+
+        <label>Konu</label>
+        <input id="subject" required placeholder="Şikayet konusunu yazın" />
+
+        <label>Şikayet / Açıklama</label>
+        <textarea id="body" required placeholder="Sorununuzu veya şikayetinizi detaylı yazın..."></textarea>
+
+        <button type="submit" class="btn primary">Gönder</button>
+      </form>
+    </section>
+
+    <section class="card">
+      <h2>Gelen Kutusu</h2>
+      <div id="inbox-list">Gelen kutusu yükleniyor...</div>
+    </section>
+  </main>
+
+  <div id="modal" class="modal hidden">
+    <div class="modal-content card">
+      <button id="close-modal" class="close">Kapat</button>
+      <div id="ticket-view"></div>
+    </div>
+  </div>
+
+  <script src="/js/support.js"></script>
+</body>
+</html>

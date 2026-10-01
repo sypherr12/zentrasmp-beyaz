@@ -1,0 +1,201 @@
+const express = require('express');
+const session = require('express-session');
+const sqlite3 = require('sqlite3').verbose();
+const bodyParser = require('body-parser');
+const path = require('path');
+
+const app = express();
+const PORT = Number(process.env.PORT || 3000);
+const SERVER_IP_DISPLAY = process.env.SERVER_IP_DISPLAY || 'Zentrasmp1.aternos.me';
+const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
+
+app.use(bodyParser.json());
+app.use(express.urlencoded({ extended: true }));
+app.use(
+  session({
+    secret: process.env.SESSION_SECRET || 'zentrasmp-session-secret',
+    resave: false,
+    saveUninitialized: false,
+    cookie: { httpOnly: true, sameSite: 'lax' }
+  })
+);
+app.use(express.static(path.join(__dirname, 'public')));
+
+const db = new sqlite3.Database('./support.db');
+
+db.serialize(() => {
+  db.run(`CREATE TABLE IF NOT EXISTS tickets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT,
+    username TEXT,
+    subject TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    status TEXT DEFAULT 'open'
+  )`);
+
+  db.run(`CREATE TABLE IF NOT EXISTS messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticket_id INTEGER,
+    sender TEXT,
+    body TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(ticket_id) REFERENCES tickets(id)
+  )`);
+});
+
+function ensureAdmin(req, res, next) {
+  if (req.session && req.session.isAdmin) {
+    return next();
+  }
+  return res.status(401).json({ error: 'Yönetici yetkisi gerekli.' });
+}
+
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'support.html'));
+});
+
+app.get('/admin', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'admin.html'));
+});
+
+app.get('/api/server-ip', (req, res) => {
+  res.json({ ip: SERVER_IP_DISPLAY });
+});
+
+app.post('/api/admin/login', (req, res) => {
+  const { username, password } = req.body;
+
+  if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
+    req.session.isAdmin = true;
+    req.session.username = username;
+    return res.json({ success: true, username });
+  }
+
+  return res.status(401).json({ error: 'Giriş bilgileri hatalı.' });
+});
+
+app.post('/api/admin/logout', (req, res) => {
+  req.session.destroy(() => {
+    res.json({ success: true });
+  });
+});
+
+app.get('/api/admin/session', (req, res) => {
+  if (req.session && req.session.isAdmin) {
+    return res.json({ loggedIn: true, username: req.session.username });
+  }
+  return res.json({ loggedIn: false });
+});
+
+app.post('/api/tickets', (req, res) => {
+  const { user_id, username, subject, body } = req.body;
+
+  if (!user_id || !subject || !body) {
+    return res.status(400).json({ error: 'user_id, konu ve açıklama zorunludur.' });
+  }
+
+  db.run(
+    `INSERT INTO tickets (user_id, username, subject) VALUES (?,?,?)`,
+    [user_id, username || 'Anonim', subject],
+    function (err) {
+      if (err) {
+        return res.status(500).json({ error: err.message });
+      }
+
+      const ticketId = this.lastID;
+      db.run(
+        `INSERT INTO messages (ticket_id, sender, body) VALUES (?,?,?)`,
+        [ticketId, 'user', body],
+        function (err2) {
+          if (err2) {
+            return res.status(500).json({ error: err2.message });
+          }
+
+          res.json({ ticketId });
+        }
+      );
+    }
+  );
+});
+
+app.get('/api/admin/tickets', ensureAdmin, (req, res) => {
+  db.all(
+    `SELECT t.*, (SELECT COUNT(*) FROM messages m WHERE m.ticket_id = t.id AND m.sender = 'admin') as admin_reply_count
+     FROM tickets t ORDER BY created_at DESC`,
+    [],
+    (err, rows) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json(rows);
+    }
+  );
+});
+
+app.get('/api/tickets/:id', (req, res) => {
+  const ticketId = req.params.id;
+
+  db.get(`SELECT * FROM tickets WHERE id = ?`, [ticketId], (err, ticket) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!ticket) return res.status(404).json({ error: 'Ticket bulunamadı.' });
+
+    db.all(`SELECT * FROM messages WHERE ticket_id = ? ORDER BY created_at ASC`, [ticketId], (err2, msgs) => {
+      if (err2) return res.status(500).json({ error: err2.message });
+      res.json({ ticket, messages: msgs });
+    });
+  });
+});
+
+app.get('/api/inbox', (req, res) => {
+  const user_id = req.query.user_id;
+
+  if (!user_id) {
+    return res.status(400).json({ error: 'user_id gerekli.' });
+  }
+
+  db.all(
+    `SELECT t.*, (SELECT COUNT(*) FROM messages m WHERE m.ticket_id = t.id AND m.sender = 'admin') as admin_reply_count
+     FROM tickets t
+     WHERE t.user_id = ?
+     ORDER BY created_at DESC`,
+    [user_id],
+    (err, rows) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json(rows);
+    }
+  );
+});
+
+app.post('/api/tickets/:id/messages', (req, res) => {
+  const ticketId = req.params.id;
+  const { sender, body } = req.body;
+
+  if (!body || !body.trim()) {
+    return res.status(400).json({ error: 'Mesaj boş olamaz.' });
+  }
+
+  const finalSender = req.session && req.session.isAdmin ? 'admin' : (sender || 'user');
+
+  db.run(`INSERT INTO messages (ticket_id, sender, body) VALUES (?,?,?)`, [ticketId, finalSender, body], function (err) {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ messageId: this.lastID, sender: finalSender });
+  });
+});
+
+app.post('/api/admin/tickets/:id/reply', ensureAdmin, (req, res) => {
+  const ticketId = req.params.id;
+  const { body } = req.body;
+
+  if (!body || !body.trim()) {
+    return res.status(400).json({ error: 'Cevap boş olamaz.' });
+  }
+
+  db.run(`INSERT INTO messages (ticket_id, sender, body) VALUES (?,?,?)`, [ticketId, 'admin', body], function (err) {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ messageId: this.lastID, sender: 'admin' });
+  });
+});
+
+app.listen(PORT, () => {
+  console.log(`Destek sunucusu çalışıyor: http://localhost:${PORT}`);
+  console.log(`Yönetici giriş: ${ADMIN_USERNAME} / ${ADMIN_PASSWORD}`);
+});
